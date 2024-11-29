@@ -4,6 +4,7 @@ import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.fabricmc.fabric.api.event.player.UseEntityCallback;
 import net.minecraft.block.Blocks;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.EntityType;
 import net.minecraft.entity.passive.VillagerEntity;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
@@ -12,49 +13,66 @@ import net.minecraft.item.SpawnEggItem;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtList;
 import net.minecraft.nbt.NbtString;
+import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.util.ActionResult;
+import net.minecraft.util.Hand;
 
-public class RightClickEventListener {
-    public static void registerRightClickEvent() {
-        UseEntityCallback.EVENT.register((player, world, hand, entity, hitResult) -> {
-            if (player.isSneaking() && entity instanceof VillagerEntity villager) {
-                NbtCompound nbt = new NbtCompound();
-                villager.writeCustomDataToNbt(nbt);
+public class RightClickEventListener
+{
+    public static void registerRightClickEvent()
+    {
+        UseEntityCallback.EVENT.register(((playerEntity, world, hand, entity, entityHitResult) ->
+        {
+            if (!world.isClient() && playerEntity.isSneaking() && hand == Hand.MAIN_HAND)
+            {
+                if (playerEntity instanceof ServerPlayerEntity)
+                {
+                    EntityType<?> entityType = entity.getType();
+                    Item spawnEgg = SpawnEggItem.forEntity(entityType);
+                    if (spawnEgg != null)
+                    {
+                        ItemStack spawnEggStack = new ItemStack(spawnEgg);
 
-                Item spawnEgg = SpawnEggItem.forEntity(villager.getType());
-                if (spawnEgg != null) {
-                    ItemStack spawnEggStack = new ItemStack(spawnEgg);
+                        // Get Entity NBT.
+                        NbtCompound nbt = new NbtCompound();
+                        entity.writeNbt(nbt);
 
-                    NbtCompound nbtCompound = new NbtCompound();
-                    NbtCompound textCompound = new NbtCompound();
-                    NbtList tooltipList = new NbtList();
+                        // Remove attributes to enable cloning of same NBT entity.
+                        nbt.remove("UUID");
+                        nbt.remove("Pos");
+                        nbt.remove("Motion");
+                        nbt.remove("Rotation");
 
-                    nbtCompound.put("EntityTag", nbt);
-                    tooltipList.add(NbtString.of("{\"text\":\"Profession: [" + villager.getVillagerData().getProfession().toString() + "]\",\"color\":\"gray\",\"italic\":false}"));
-                    textCompound.put("Lore", tooltipList);
-                    nbtCompound.put("display", textCompound);
+                        NbtCompound nbtCompound = new NbtCompound();
+                        nbtCompound.put("EntityTag", nbt);
 
-                    spawnEggStack.setNbt(nbtCompound);
-                    if (player.getInventory().getEmptySlot() != -1) {
-                        player.giveItemStack(spawnEggStack);
-                    } else {
-                        player.dropItem(spawnEggStack, true);
+                        // Lore Attribute.
+                        if (entity instanceof VillagerEntity villager)
+                        {
+                            NbtCompound textCompound = new NbtCompound();
+                            NbtList tooltipList = new NbtList();
+
+                            tooltipList.add(NbtString.of("{\"text\":\"Profession: [" + villager.getVillagerData().getProfession().toString() + "]\",\"color\":\"gray\",\"italic\":false}"));
+                            textCompound.put("Lore", tooltipList);
+                            nbtCompound.put("display", textCompound);
+                        }
+
+                        spawnEggStack.setNbt(nbtCompound);
+
+                        // Drop item if inventory is full.
+                        if (playerEntity.getInventory().getEmptySlot() != -1)
+                            playerEntity.giveItemStack(spawnEggStack);
+                        else
+                            playerEntity.dropItem(spawnEggStack, true);
+
+                        // Remove Entity.
+                        entity.remove(Entity.RemovalReason.DISCARDED);
+                        return ActionResult.SUCCESS;
                     }
                 }
-
-                villager.remove(Entity.RemovalReason.DISCARDED);
-                return ActionResult.SUCCESS;
             }
 
             return ActionResult.PASS;
-        });
-
-        UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
-            if (!player.isCreative() && world.getBlockState(hitResult.getBlockPos()).getBlock() == Blocks.SPAWNER && player.getStackInHand(hand).getItem() == Items.VILLAGER_SPAWN_EGG) {
-                return ActionResult.FAIL;
-            }
-
-            return ActionResult.PASS;
-        });
+        }));
     }
 }
